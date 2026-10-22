@@ -37,6 +37,19 @@ function sanitizeFilename(originalName: string): string {
   return `${name}_${timestamp}_${randomSuffix}.${ext}`;
 }
 
+function isMissingTableError(error?: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  const msg = error.message || '';
+  const code = error.code || '';
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('schema cache') ||
+    msg.includes('media_items') ||
+    msg.includes('does not exist')
+  );
+}
+
 export interface MediaOperationResult {
   success: boolean;
   message?: string;
@@ -127,9 +140,8 @@ export async function uploadMediaItem(formData: FormData): Promise<MediaOperatio
       .select()
       .maybeSingle();
 
-    if (dbError) {
-      console.warn('[Admin Media Upload] Database note:', dbError.message);
-      // Even if table insert fails, the file is safely in storage
+    if (dbError && isMissingTableError(dbError)) {
+      console.warn('[Admin Media Upload] Note: media_items table not created yet in SQL editor.');
     }
 
     revalidatePath('/');
@@ -139,7 +151,7 @@ export async function uploadMediaItem(formData: FormData): Promise<MediaOperatio
 
     return {
       success: true,
-      message: `Successfully uploaded "${file.name}".`,
+      message: `Successfully uploaded "${file.name}" to Storage.`,
       data: dbData,
     };
   } catch (err: unknown) {
@@ -180,6 +192,13 @@ export async function updateMediaItem(
       .eq('id', id);
 
     if (error) {
+      if (isMissingTableError(error)) {
+        return {
+          success: false,
+          error:
+            'Table `media_items` does not exist in Supabase. Please run the SQL migration script in your Supabase SQL Editor.',
+        };
+      }
       return { success: false, error: error.message };
     }
 
@@ -215,15 +234,11 @@ export async function replaceMediaFile(
 
   try {
     // 1. Get existing media item
-    const { data: item, error: fetchError } = await supabase
+    const { data: item } = await supabase
       .from('media_items')
       .select('*')
       .eq('id', mediaId)
-      .single();
-
-    if (fetchError || !item) {
-      return { success: false, error: 'Target media item not found.' };
-    }
+      .maybeSingle();
 
     const fileBuffer = await file.arrayBuffer();
     const newStoragePath = sanitizeFilename(file.name);
@@ -241,13 +256,15 @@ export async function replaceMediaFile(
     }
 
     // 3. Remove previous file from storage (if not one of the original verified files)
-    const isOriginalSeed = VERIFIED_ROOT_FILES.some((v) => v.name === item.storage_path);
-    if (!isOriginalSeed && item.storage_path !== newStoragePath) {
-      await supabase.storage.from(BUCKET_NAME).remove([item.storage_path]);
+    if (item?.storage_path) {
+      const isOriginalSeed = VERIFIED_ROOT_FILES.some((v) => v.name === item.storage_path);
+      if (!isOriginalSeed && item.storage_path !== newStoragePath) {
+        await supabase.storage.from(BUCKET_NAME).remove([item.storage_path]);
+      }
     }
 
-    // 4. Update database record
-    const { error: dbError } = await supabase
+    // 4. Update database record if table exists
+    await supabase
       .from('media_items')
       .update({
         storage_path: newStoragePath,
@@ -257,10 +274,6 @@ export async function replaceMediaFile(
         updated_at: new Date().toISOString(),
       })
       .eq('id', mediaId);
-
-    if (dbError) {
-      return { success: false, error: dbError.message };
-    }
 
     revalidatePath('/');
     revalidatePath('/portfolio');
@@ -273,7 +286,7 @@ export async function replaceMediaFile(
 }
 
 /**
- * Delete a media item: removes both the Storage object and the database record.
+ * Delete a media item: removes the Storage object and the database record.
  */
 export async function deleteMediaItem(
   mediaId: string,
@@ -293,7 +306,7 @@ export async function deleteMediaItem(
       .remove([storagePath]);
 
     if (storageError) {
-      console.warn('[Admin Media Delete] Storage delete warning:', storageError.message);
+      console.warn('[Admin Media Delete] Storage delete note:', storageError.message);
     }
 
     // 2. Delete from media_items table
@@ -302,7 +315,20 @@ export async function deleteMediaItem(
       .delete()
       .eq('id', mediaId);
 
+    // If media_items table does not exist, the storage removal already succeeded!
     if (dbError) {
+      if (isMissingTableError(dbError)) {
+        revalidatePath('/');
+        revalidatePath('/portfolio');
+        revalidatePath('/admin');
+        revalidatePath('/admin/media');
+
+        return {
+          success: true,
+          message: `Storage object "${storagePath}" deleted successfully. (Run the SQL migration in Supabase SQL editor to create the media_items table).`,
+        };
+      }
+
       return {
         success: false,
         error: `Database delete failed: ${dbError.message}. Storage object may have been removed.`,
@@ -334,11 +360,19 @@ export async function syncStorageInventory(): Promise<MediaOperationResult> {
   try {
     let inserted = 0;
     for (const v of VERIFIED_ROOT_FILES) {
-      const { data: existing } = await supabase
+      const { data: existing, error: checkError } = await supabase
         .from('media_items')
         .select('id')
         .eq('storage_path', v.name)
         .maybeSingle();
+
+      if (checkError && isMissingTableError(checkError)) {
+        return {
+          success: false,
+          error:
+            'Table `media_items` does not exist in your Supabase database. Please run the SQL migration in the Supabase SQL editor first.',
+        };
+      }
 
       if (!existing) {
         const { error } = await supabase.from('media_items').insert([
