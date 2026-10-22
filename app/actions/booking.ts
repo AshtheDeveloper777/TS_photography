@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { studioConfig } from '@/lib/config/studio';
 
 const activeServiceSlugs = studioConfig.services
@@ -28,7 +29,7 @@ const bookingSchema = z.object({
   serviceType: z
     .string()
     .min(1, { message: 'Please select a photography service.' })
-    .refine((val) => activeServiceSlugs.includes(val) || val === 'Other', {
+    .refine((val) => activeServiceSlugs.includes(val) || val === 'Other' || val.toLowerCase().includes('other'), {
       message: 'Please choose an available photography service.',
     }),
   preferredDate: z
@@ -99,13 +100,13 @@ export async function submitBookingEnquiry(
     // Silently return success to mislead malicious scrapers/bots
     return {
       success: true,
-      message: 'Thank you. We have received your enquiry and will be in touch shortly.',
+      message: 'Thank you. We have received your enquiry and will be in touch shortly to discuss your session.',
     };
   }
 
   // 3. Persist to Supabase booking_enquiries table
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = createAdminClient() || (await createServerSupabaseClient());
 
     const payload = {
       full_name: fullName,
@@ -122,7 +123,6 @@ export async function submitBookingEnquiry(
 
     if (error) {
       console.warn(`[TS Photography Booking] Supabase insert note: ${error.message}`);
-      // Fallback: If table has not been created yet in local test, return helpful message
       if (error.code === '42P01' || error.message.includes('relation "booking_enquiries" does not exist')) {
         return {
           success: false,

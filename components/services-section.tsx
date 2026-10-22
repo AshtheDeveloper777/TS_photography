@@ -14,6 +14,15 @@ export default function ServicesSection({
 }: ServicesSectionProps) {
   const activeServices = services.filter((s) => s.active).sort((a, b) => a.order - b.order);
 
+  const handleEnquireClick = (serviceSlug: string) => {
+    // If the booking form is already on the page, dispatch custom event for immediate responsive selection
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('ts-select-service', { detail: { service: serviceSlug } })
+      );
+    }
+  };
+
   return (
     <section
       id="services"
@@ -71,11 +80,13 @@ export default function ServicesSection({
                 </p>
               </div>
 
-              {/* Action Link */}
+              {/* Action Link: Pre-selects service and navigates to booking form */}
               <div className="md:col-span-2 flex md:justify-end items-center pt-2 md:pt-0">
                 <Link
-                  href={`/#contact?service=${encodeURIComponent(service.title)}`}
-                  className="inline-flex items-center space-x-2 text-xs uppercase tracking-editorial-widest text-[#20201E] group-hover:text-[#B39A72] transition-colors"
+                  href={`/#contact?service=${encodeURIComponent(service.slug)}`}
+                  onClick={() => handleEnquireClick(service.slug)}
+                  className="inline-flex items-center space-x-2 text-xs uppercase tracking-editorial-widest text-[#20201E] group-hover:text-[#B39A72] transition-colors py-2 px-3 border border-transparent group-hover:border-[#B39A72]"
+                  aria-label={`Enquire about ${service.title}`}
                 >
                   <span>Enquire</span>
                   <ArrowRight
@@ -92,7 +103,8 @@ export default function ServicesSection({
         <div className="mt-16 pt-8 border-t border-[#D8D2C8] flex flex-col sm:flex-row items-center justify-between text-xs text-[#77746F]">
           <span>Every commission includes an initial consultation and tailored artistic direction.</span>
           <Link
-            href="/#contact"
+            href="/#contact?service=other-services"
+            onClick={() => handleEnquireClick('other-services')}
             className="mt-4 sm:mt-0 underline underline-offset-4 hover:text-[#20201E] transition-colors"
           >
             Request a Custom Quote &rarr;

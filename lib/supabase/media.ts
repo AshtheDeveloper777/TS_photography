@@ -8,10 +8,10 @@ const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'm4v', 'ogv']);
 
 // Known existing verified media uploaded to the root of TS_photography bucket
 const VERIFIED_ROOT_FILES = [
+  'sunset1.jpeg',
   'img1.jpeg',
   's1.jpeg',
   's2.jpeg',
-  'sunset1.jpeg',
   'sunset2.jpeg',
   'WhatsApp Image 2026-10-18 at 4.16.45 PM.jpeg',
   'Video2.mp4',
@@ -31,7 +31,7 @@ function cleanMediaTitle(filename: string): string {
 }
 
 /**
- * Server-side Supabase client for storage retrieval.
+ * Server-side Supabase client for public media retrieval.
  */
 function getStorageClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -50,73 +50,30 @@ function getStorageClient() {
 }
 
 /**
- * Processes a list of file entries from the bucket root into typed MediaAssets.
+ * Builds public or signed URL for a given storage path.
  */
-async function processFiles(
+async function resolveMediaUrl(
   supabase: ReturnType<typeof getStorageClient>,
-  fileNames: string[],
-  metadataMap?: Map<string, { size?: number; mime?: string; createdAt?: string | null; updatedAt?: string | null }>
-): Promise<{ photos: MediaAsset[]; videoAsset: MediaAsset | null }> {
-  if (!supabase) return { photos: [], videoAsset: null };
+  storagePath: string
+): Promise<string> {
+  if (!supabase) return '';
 
-  const photos: MediaAsset[] = [];
-  let videoAsset: MediaAsset | null = null;
-
-  for (const name of fileNames) {
-    if (!name || name === '.emptyFolderPlaceholder') continue;
-
-    const ext = getFileExtension(name);
-    const meta = metadataMap?.get(name);
-    const mime = meta?.mime || '';
-
-    const isImage = IMAGE_EXTENSIONS.has(ext) || mime.startsWith('image/');
-    const isVideo = VIDEO_EXTENSIONS.has(ext) || mime.startsWith('video/');
-
-    if (!isImage && !isVideo) continue;
-
-    // Use Supabase SDK getPublicUrl for files in root (no prepended folder)
-    let mediaUrl: string;
-    const { data: publicData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(name);
-    mediaUrl = publicData.publicUrl;
-
-    // If bucket is private and service role key is present, generate signed URL
-    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      const { data: signedData } = await supabase.storage
-        .from(BUCKET_NAME)
-        .createSignedUrl(name, 3600);
-      if (signedData?.signedUrl) {
-        mediaUrl = signedData.signedUrl;
-      }
-    }
-
-    const asset: MediaAsset = {
-      id: name,
-      name,
-      url: mediaUrl,
-      type: isVideo ? 'video' : 'image',
-      mimeType: mime || (isVideo ? `video/${ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`),
-      size: meta?.size,
-      createdAt: meta?.createdAt,
-      updatedAt: meta?.updatedAt,
-      title: cleanMediaTitle(name),
-      aspectRatio: isVideo ? 'landscape' : 'landscape',
-    };
-
-    if (isVideo) {
-      if (!videoAsset) {
-        videoAsset = asset;
-      }
-    } else {
-      photos.push(asset);
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { data: signedData } = await supabase.storage
+      .from(BUCKET_NAME)
+      .createSignedUrl(storagePath, 3600);
+    if (signedData?.signedUrl) {
+      return signedData.signedUrl;
     }
   }
 
-  return { photos, videoAsset };
+  const { data: publicData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(storagePath);
+  return publicData.publicUrl;
 }
 
 /**
- * Fetches the studio media inventory from the Supabase Storage bucket `TS_photography`.
- * Discovers newly uploaded media dynamically while guaranteeing verified root files display.
+ * Fetches the studio media inventory from Supabase.
+ * Prioritizes media_items where is_visible = true, falling back gracefully to storage listing & verified catalog.
  */
 export async function getStudioMediaInventory(): Promise<StudioMediaInventory> {
   const supabase = getStorageClient();
@@ -135,42 +92,86 @@ export async function getStudioMediaInventory(): Promise<StudioMediaInventory> {
     };
   }
 
+  const photos: MediaAsset[] = [];
+  let videoAsset: MediaAsset | null = null;
+
   try {
-    // 1. Dynamic discovery: Query the bucket root using exact name 'TS_photography'
-    const { data: files, error } = await supabase.storage
-      .from(BUCKET_NAME)
-      .list('', {
-        limit: 100,
-        sortBy: { column: 'name', order: 'asc' },
-      });
+    // 1. Try querying media_items table where is_visible = true
+    const { data: dbItems, error: dbError } = await supabase
+      .from('media_items')
+      .select('*')
+      .eq('is_visible', true)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: false });
 
-    let candidateNames: string[] = [];
-    const metaMap = new Map<string, { size?: number; mime?: string; createdAt?: string | null; updatedAt?: string | null }>();
+    if (!dbError && dbItems && dbItems.length > 0) {
+      for (const item of dbItems) {
+        const mediaUrl = await resolveMediaUrl(supabase, item.storage_path);
+        const isVideo = item.media_type === 'video';
 
-    if (files && files.length > 0) {
-      // Bucket list succeeded! Collect discovered file names
-      for (const f of files) {
-        candidateNames.push(f.name);
-        metaMap.set(f.name, {
-          size: f.metadata?.size,
-          mime: f.metadata?.mimetype,
-          createdAt: f.created_at,
-          updatedAt: f.updated_at,
-        });
+        const asset: MediaAsset = {
+          id: item.id || item.storage_path,
+          name: item.filename || item.storage_path,
+          url: mediaUrl,
+          type: isVideo ? 'video' : 'image',
+          mimeType: item.mime_type || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          size: item.file_size,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at,
+          title: item.title || cleanMediaTitle(item.filename),
+          caption: item.description,
+          category: item.category,
+          aspectRatio: isVideo ? 'landscape' : 'landscape',
+        };
+
+        if (isVideo) {
+          if (!videoAsset) videoAsset = asset;
+        } else {
+          photos.push(asset);
+        }
       }
     } else {
-      // If list() returned empty or failed due to storage RLS, utilize the verified root files
-      if (error) {
-        console.warn(`[TS Photography Storage] Note on listing: ${error.message}. Using verified root files.`);
+      // 2. Fallback: Query storage directly or use verified root files
+      const { data: files } = await supabase.storage
+        .from(BUCKET_NAME)
+        .list('', {
+          limit: 100,
+          sortBy: { column: 'name', order: 'asc' },
+        });
+
+      let candidateNames: string[] = [];
+      if (files && files.length > 0) {
+        candidateNames = files.map((f) => f.name).filter((n) => n && n !== '.emptyFolderPlaceholder');
+      } else {
+        candidateNames = [...VERIFIED_ROOT_FILES];
       }
-      candidateNames = [...VERIFIED_ROOT_FILES];
+
+      for (const name of candidateNames) {
+        const ext = getFileExtension(name);
+        const isImage = IMAGE_EXTENSIONS.has(ext);
+        const isVideo = VIDEO_EXTENSIONS.has(ext);
+        if (!isImage && !isVideo) continue;
+
+        const mediaUrl = await resolveMediaUrl(supabase, name);
+        const asset: MediaAsset = {
+          id: name,
+          name,
+          url: mediaUrl,
+          type: isVideo ? 'video' : 'image',
+          mimeType: isVideo ? `video/${ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+          title: cleanMediaTitle(name),
+          aspectRatio: 'landscape',
+        };
+
+        if (isVideo) {
+          if (!videoAsset) videoAsset = asset;
+        } else {
+          photos.push(asset);
+        }
+      }
     }
 
-    // Process files into typed images and video
-    const { photos, videoAsset } = await processFiles(supabase, candidateNames, metaMap);
-
-    // Select the strongest photograph for the hero section:
-    // sunset1.jpeg is a dramatic, cinematic editorial photograph perfect for the hero!
+    // Hero selection: sunset1.jpeg is the cinematic hero portrait
     let heroPhoto: MediaAsset | null = null;
     let portfolioPhotos: MediaAsset[] = [];
 
@@ -203,8 +204,29 @@ export async function getStudioMediaInventory(): Promise<StudioMediaInventory> {
     const message = err instanceof Error ? err.message : 'Unknown storage error';
     console.error(`[TS Photography Storage] Error: ${message}`);
 
-    // Graceful fallback to verified root files if network check fails
-    const { photos, videoAsset } = await processFiles(supabase, VERIFIED_ROOT_FILES);
+    // Guaranteed fallback to verified root files
+    for (const name of VERIFIED_ROOT_FILES) {
+      const ext = getFileExtension(name);
+      const isVideo = VIDEO_EXTENSIONS.has(ext);
+      const { data: publicData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(name);
+
+      const asset: MediaAsset = {
+        id: name,
+        name,
+        url: publicData.publicUrl,
+        type: isVideo ? 'video' : 'image',
+        mimeType: isVideo ? `video/${ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+        title: cleanMediaTitle(name),
+        aspectRatio: 'landscape',
+      };
+
+      if (isVideo) {
+        if (!videoAsset) videoAsset = asset;
+      } else {
+        photos.push(asset);
+      }
+    }
+
     const heroPhoto = photos.length > 0 ? photos[0] : null;
     const portfolioPhotos = photos.length > 1 ? photos.slice(1) : [];
 

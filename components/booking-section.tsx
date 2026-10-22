@@ -1,6 +1,7 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useState, useEffect, useActionState, Suspense, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Mail, Phone, MessageSquare, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import InstagramIcon from '@/components/icons/instagram';
 import { submitBookingEnquiry, BookingFormState } from '@/app/actions/booking';
@@ -20,13 +21,109 @@ interface BookingSectionProps {
 
 const initialState: BookingFormState = {};
 
-export default function BookingSection({
+function BookingFormInner({
   services,
   contact,
 }: BookingSectionProps) {
   const [state, formAction, isPending] = useActionState(submitBookingEnquiry, initialState);
+  const searchParams = useSearchParams();
+  const selectRef = useRef<HTMLSelectElement | null>(null);
 
   const activeServices = services.filter((s) => s.active);
+
+  // Helper to map incoming slug or title to exact select value
+  const resolveServiceTitle = (paramValue?: string | null): string => {
+    if (!paramValue) return '';
+    const cleanParam = decodeURIComponent(paramValue).trim().toLowerCase();
+
+    // Check slug matches
+    const bySlug = activeServices.find((s) => s.slug.toLowerCase() === cleanParam);
+    if (bySlug) return bySlug.title;
+
+    // Check title matches
+    const byTitle = activeServices.find((s) => s.title.toLowerCase() === cleanParam);
+    if (byTitle) return byTitle.title;
+
+    // Check 'other'
+    if (cleanParam.includes('other')) {
+      return 'Other';
+    }
+
+    // Partial matches (e.g. 'wedding' matches 'Wedding Photography')
+    const partial = activeServices.find(
+      (s) => s.title.toLowerCase().includes(cleanParam) || s.slug.toLowerCase().includes(cleanParam)
+    );
+    if (partial) return partial.title;
+
+    return '';
+  };
+
+  const [selectedService, setSelectedService] = useState<string>(() => {
+    const fromQuery = searchParams?.get('service');
+    return resolveServiceTitle(fromQuery);
+  });
+
+  const [isHighlighted, setIsHighlighted] = useState(false);
+
+  // 1. Listen for searchParams changes (e.g. back/forward navigation or refresh)
+  useEffect(() => {
+    const serviceParam = searchParams?.get('service');
+    if (serviceParam) {
+      const resolved = resolveServiceTitle(serviceParam);
+      if (resolved) {
+        setSelectedService(resolved);
+        triggerHighlight();
+      }
+    }
+  }, [searchParams]);
+
+  // 2. Also listen for client custom event or hash changes (e.g. /#contact?service=...)
+  useEffect(() => {
+    const handleCustomSelect = (e: Event) => {
+      const customEvent = e as CustomEvent<{ service?: string }>;
+      if (customEvent.detail?.service) {
+        const resolved = resolveServiceTitle(customEvent.detail.service);
+        if (resolved) {
+          setSelectedService(resolved);
+          triggerHighlight();
+          // Scroll smoothly to contact section
+          document.getElementById('contact')?.scrollIntoView({ behavior: 'smooth' });
+        }
+      }
+    };
+
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      const paramIndex = hash.indexOf('?');
+      if (paramIndex !== -1) {
+        const queryPart = hash.substring(paramIndex + 1);
+        const params = new URLSearchParams(queryPart);
+        const s = params.get('service');
+        if (s) {
+          const resolved = resolveServiceTitle(s);
+          if (resolved) {
+            setSelectedService(resolved);
+            triggerHighlight();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('ts-select-service', handleCustomSelect);
+    window.addEventListener('hashchange', handleHashChange);
+    // Check hash on initial load
+    handleHashChange();
+
+    return () => {
+      window.removeEventListener('ts-select-service', handleCustomSelect);
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, [activeServices]);
+
+  const triggerHighlight = () => {
+    setIsHighlighted(true);
+    setTimeout(() => setIsHighlighted(false), 2000);
+  };
 
   const whatsappUrl =
     contact.whatsapp ||
@@ -102,9 +199,9 @@ export default function BookingSection({
                       href={whatsappUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center space-x-1 text-xs uppercase tracking-wider text-[#B39A72] hover:text-[#20201E] font-medium transition-colors"
+                      className="text-xs uppercase tracking-editorial-wide text-[#B39A72] hover:underline inline-block mt-1"
                     >
-                      <span>Chat on WhatsApp &rarr;</span>
+                      Start Conversation &rarr;
                     </a>
                   </div>
                 </div>
@@ -116,7 +213,7 @@ export default function BookingSection({
                   </div>
                   <div className="flex-1">
                     <span className="text-[10px] uppercase tracking-editorial-widest text-[#77746F] block mb-1">
-                      Instagram Portfolio
+                      Instagram Stories &amp; DM
                     </span>
                     <span className="font-interface text-sm font-medium text-[#20201E] block mb-1">
                       {instagramHandle}
@@ -125,67 +222,74 @@ export default function BookingSection({
                       href={instagramProfileUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center space-x-1 text-xs uppercase tracking-wider text-[#B39A72] hover:text-[#20201E] font-medium transition-colors"
+                      className="text-xs uppercase tracking-editorial-wide text-[#B39A72] hover:underline inline-block mt-1"
                     >
-                      <span>Follow Our Work &rarr;</span>
+                      Follow &amp; Message &rarr;
                     </a>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="pt-6 border-t border-[#D8D2C8] text-xs text-[#77746F]">
-              <p className="italic font-editorial text-base text-[#20201E] mb-1">
-                TS Photography Studio
-              </p>
-              <p>Founded by Tholkappiyan A and student collaborators.</p>
+            {/* Studio Commitment Note */}
+            <div className="pt-6 border-t border-[#D8D2C8] text-xs text-[#77746F] font-interface">
+              <span className="block font-medium text-[#20201E] mb-1">Response Timeframe</span>
+              <span>We reply to all inquiries within 24 to 48 business hours with tailored availability and investment information.</span>
             </div>
           </div>
 
-          {/* Right Column: Functional Booking Enquiry Form */}
-          <div className="lg:col-span-7 bg-[#FFFFFF] p-8 md:p-12 border border-[#D8D2C8] shadow-editorial">
-            {state.success ? (
-              /* Success Confirmation */
-              <div className="py-12 text-center space-y-4">
-                <div className="w-16 h-16 mx-auto rounded-full bg-[#B39A72]/15 border border-[#B39A72]/40 flex items-center justify-center text-[#B39A72]">
-                  <CheckCircle2 size={32} />
+          {/* Right Column: Direct Booking Enquiry Form */}
+          <div className="lg:col-span-7 bg-[#FFFFFF] border border-[#D8D2C8] p-8 md:p-12 shadow-sm">
+            <div className="mb-8 pb-6 border-b border-[#D8D2C8]">
+              <h3 className="font-editorial text-2xl md:text-3xl text-[#20201E]">
+                Book a Session
+              </h3>
+              <p className="text-xs md:text-sm text-[#77746F] mt-2 font-interface">
+                Share a few details about your desired session. We will get back to you with custom recommendations.
+              </p>
+            </div>
+
+            {/* Success State Notification */}
+            {state?.success ? (
+              <div
+                className="p-8 bg-[#F7F5F0] border border-[#B39A72] text-center space-y-4"
+                role="alert"
+                aria-live="polite"
+              >
+                <div className="w-14 h-14 rounded-full bg-[#FFFFFF] border border-[#B39A72] text-[#B39A72] flex items-center justify-center mx-auto">
+                  <CheckCircle2 size={28} />
                 </div>
-                <h3 className="font-editorial text-3xl text-[#20201E]">
+                <h4 className="font-editorial text-2xl text-[#20201E]">
                   Enquiry Received
-                </h3>
-                <p className="text-sm text-[#77746F] max-w-md mx-auto leading-relaxed">
-                  Thank you for contacting TS Photography! Your enquiry has been received. We&rsquo;ll get back to you as soon as possible.
+                </h4>
+                <p className="text-sm text-[#77746F] font-interface max-w-md mx-auto leading-relaxed">
+                  {state.message}
                 </p>
-                <div className="pt-6">
-                  <button
-                    type="button"
-                    onClick={() => window.location.reload()}
-                    className="px-6 py-3 bg-[#20201E] text-white text-xs uppercase tracking-editorial-widest hover:bg-[#B39A72] transition-colors"
+                <div className="pt-4 border-t border-[#D8D2C8] flex flex-col sm:flex-row items-center justify-center gap-4 text-xs">
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#20201E] hover:text-[#B39A72] uppercase tracking-editorial-wider underline underline-offset-4"
                   >
-                    Send Another Note
-                  </button>
+                    Send Quick Note on WhatsApp &rarr;
+                  </a>
                 </div>
               </div>
             ) : (
-              /* Interactive Booking Form */
               <form action={formAction} className="space-y-6">
-                <div>
-                  <h3 className="font-editorial text-2xl text-[#20201E] mb-1">
-                    Book a Photography Session
-                  </h3>
-                  <p className="text-xs text-[#77746F] font-interface">
-                    Fill in your details below and we will connect with you to tailor your session.
-                  </p>
-                </div>
-
-                {state.message && !state.success && (
-                  <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-xs flex items-center space-x-2">
-                    <AlertCircle size={16} className="shrink-0" />
+                {/* General Submission Error */}
+                {state?.message && !state?.success && (
+                  <div
+                    className="p-4 bg-red-50 border border-red-200 text-red-700 text-xs flex items-start space-x-3"
+                    role="alert"
+                  >
+                    <AlertCircle size={16} className="shrink-0 mt-0.5" />
                     <span>{state.message}</span>
                   </div>
                 )}
 
-                {/* Honeypot field (hidden from users, catches automated spam bots) */}
+                {/* Honeypot hidden input for spam protection */}
                 <input
                   type="text"
                   name="_hp"
@@ -201,7 +305,7 @@ export default function BookingSection({
                     htmlFor="fullName"
                     className="block text-xs uppercase tracking-editorial-widest text-[#20201E] mb-2 font-interface"
                   >
-                    Full Name <span className="text-[#B39A72]">*</span>
+                    Your Name <span className="text-[#B39A72]">*</span>
                   </label>
                   <input
                     type="text"
@@ -263,22 +367,37 @@ export default function BookingSection({
                   </div>
                 </div>
 
-                {/* Photography Service Selection */}
+                {/* Photography Service Selection with dynamic prefill & highlight */}
                 <div>
-                  <label
-                    htmlFor="serviceType"
-                    className="block text-xs uppercase tracking-editorial-widest text-[#20201E] mb-2 font-interface"
-                  >
-                    Photography Service <span className="text-[#B39A72]">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label
+                      htmlFor="serviceType"
+                      className="block text-xs uppercase tracking-editorial-widest text-[#20201E] font-interface"
+                    >
+                      Photography Service <span className="text-[#B39A72]">*</span>
+                    </label>
+                    {selectedService && (
+                      <span className="text-[11px] text-[#B39A72] uppercase tracking-wider font-medium">
+                        Selected: {selectedService}
+                      </span>
+                    )}
+                  </div>
                   <select
+                    ref={selectRef}
                     id="serviceType"
                     name="serviceType"
                     required
-                    defaultValue=""
+                    value={selectedService}
+                    onChange={(e) => setSelectedService(e.target.value)}
                     className={`w-full px-4 py-3 bg-[#F7F5F0] border ${
-                      state.fieldErrors?.serviceType ? 'border-red-400' : 'border-[#D8D2C8]'
-                    } text-[#20201E] text-sm focus:outline-none focus:border-[#20201E] transition-colors`}
+                      state.fieldErrors?.serviceType
+                        ? 'border-red-400'
+                        : isHighlighted
+                        ? 'border-[#B39A72] ring-2 ring-[#B39A72]/30'
+                        : selectedService
+                        ? 'border-[#20201E]'
+                        : 'border-[#D8D2C8]'
+                    } text-[#20201E] text-sm focus:outline-none focus:border-[#20201E] transition-all`}
                   >
                     <option value="" disabled>
                       Select an active service...
@@ -373,7 +492,7 @@ export default function BookingSection({
                     )}
                   </button>
                   <p className="mt-3 text-[11px] text-[#77746F] text-center">
-                    Submitting this form does not commit you to a booking. We will get back to you as soon as possible.
+                    Submitting this form sends an inquiry to the studio. Your session will be confirmed separately after reviewing details and availability.
                   </p>
                 </div>
               </form>
@@ -382,5 +501,19 @@ export default function BookingSection({
         </div>
       </div>
     </section>
+  );
+}
+
+export default function BookingSection(props: BookingSectionProps) {
+  return (
+    <Suspense
+      fallback={
+        <div className="py-24 text-center text-sm text-[#77746F] bg-[#F7F5F0]">
+          Loading booking section...
+        </div>
+      }
+    >
+      <BookingFormInner {...props} />
+    </Suspense>
   );
 }
