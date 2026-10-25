@@ -133,8 +133,8 @@ export const studioConfig: StudioConfig = {
     email: 'tholkappiyana07@gmail.com',
     phone: '+91 6369911759',
     whatsapp: 'https://wa.me/916369911759?text=Hi%20TS%20Photography!%20I\'m%20interested%20in%20booking%20a%20photography%20session.%20Could%20you%20please%20share%20more%20details%3F',
-    instagram: '@ts_photo_grapgy_56',
-    instagramUrl: 'https://www.instagram.com/ts_photo_grapgy_56/',
+    instagram: '@ts_photo_graphy_56',
+    instagramUrl: 'https://www.instagram.com/ts_photo_graphy_56/',
     address: 'TS Photography Studio',
   },
 };

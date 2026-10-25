@@ -13,7 +13,7 @@ A premium editorial website for **TS Photography**, designed with timeless ivory
 - **Configurable Services**: 8 photography categories with customized descriptions and direct booking links.
 - **About the Studio**: Narrative introducing founder **Tholkappiyan A** and student collaborators with verified signature sunset photography.
 - **End-to-End Booking System**: Client + Server-side validation with Zod, honeypot spam protection, and Row Level Security (RLS) persistence to Supabase.
-- **Quick Contact Shortcuts**: Immediate WhatsApp (+91 6369911759), direct Email (	holkappiyana07@gmail.com), and Instagram (@ts_photo_grapgy_56).
+- **Quick Contact Shortcuts**: Immediate WhatsApp (+91 6369911759), direct Email (	holkappiyana07@gmail.com), and Instagram (@ts_photo_graphy_56).
 
 ---
 

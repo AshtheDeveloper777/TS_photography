@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useEffect, useTransition } from 'react';
 import {
   Inbox,
   Search,
@@ -18,8 +18,9 @@ import {
   ExternalLink,
   ChevronRight,
   User,
+  Edit2,
 } from 'lucide-react';
-import { updateEnquiryStatus, deleteEnquiry } from '@/app/actions/enquiries';
+import { updateEnquiryStatus, updateEnquiry, deleteEnquiry } from '@/app/actions/enquiries';
 
 export interface BookingEnquiry {
   id: string;
@@ -37,6 +38,18 @@ export interface BookingEnquiry {
 interface EnquiriesManagerProps {
   initialEnquiries: BookingEnquiry[];
 }
+
+const ALL_SERVICES = [
+  'Wedding Photography',
+  'Pre-Wedding Photography',
+  'Portrait Photography',
+  'Family Photography',
+  'Event Photography',
+  'Commercial Photography',
+  'Product Photography',
+  'Other Photography Services',
+  'Other',
+];
 
 const STATUS_CONFIG: Record<
   string,
@@ -86,6 +99,11 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
   const [isPending, startTransition] = useTransition();
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  // Sync state when server props update or after router revalidation
+  useEffect(() => {
+    setEnquiries(initialEnquiries);
+  }, [initialEnquiries]);
+
   const showToast = (type: 'success' | 'error', message: string) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 5000);
@@ -131,9 +149,27 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
         if (selectedEnquiry && selectedEnquiry.id === enquiryId) {
           setSelectedEnquiry((prev) => (prev ? { ...prev, status: newStatus as any } : null));
         }
-        showToast('success', `Status updated to ${newStatus}.`);
+        showToast('success', `Status updated to "${newStatus}".`);
       } else {
-        showToast('error', res.error || 'Failed to update status.');
+        showToast('error', res.error || 'Failed to update status in database.');
+      }
+    });
+  };
+
+  // Inquiry / Service type update
+  const handleServiceTypeChange = (enquiryId: string, newServiceType: string) => {
+    startTransition(async () => {
+      const res = await updateEnquiry(enquiryId, { service_type: newServiceType });
+      if (res.success) {
+        setEnquiries((prev) =>
+          prev.map((e) => (e.id === enquiryId ? { ...e, service_type: newServiceType } : e))
+        );
+        if (selectedEnquiry && selectedEnquiry.id === enquiryId) {
+          setSelectedEnquiry((prev) => (prev ? { ...prev, service_type: newServiceType } : null));
+        }
+        showToast('success', `Inquiry type updated to "${newServiceType}".`);
+      } else {
+        showToast('error', res.error || 'Failed to update inquiry type in database.');
       }
     });
   };
@@ -146,7 +182,7 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
         setEnquiries((prev) => prev.filter((e) => e.id !== enquiryId));
         if (selectedEnquiry?.id === enquiryId) setSelectedEnquiry(null);
         setDeleteConfirmId(null);
-        showToast('success', 'Enquiry deleted.');
+        showToast('success', 'Enquiry deleted successfully.');
       } else {
         showToast('error', res.error || 'Failed to delete enquiry.');
       }
@@ -327,9 +363,26 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
                     >
                       {statusInfo.label}
                     </span>
-                    <span className="text-xs text-[#B39A72] font-medium bg-[#F7F5F0] px-2 py-0.5 border border-[#D8D2C8]">
-                      {enquiry.service_type}
-                    </span>
+
+                    {/* Quick Inquiry / Service Type Dropdown in row */}
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center"
+                    >
+                      <select
+                        value={enquiry.service_type}
+                        onChange={(e) => handleServiceTypeChange(enquiry.id, e.target.value)}
+                        disabled={isPending}
+                        className="text-xs text-[#B39A72] font-medium bg-[#F7F5F0] px-2 py-0.5 border border-[#D8D2C8] hover:border-[#B39A72] focus:outline-none cursor-pointer"
+                        title="Click to change inquiry / service type"
+                      >
+                        {ALL_SERVICES.map((srv) => (
+                          <option key={srv} value={srv}>
+                            {srv}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {/* Contact & Meta Row */}
@@ -364,7 +417,7 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
                   </p>
                 </div>
 
-                {/* Right Side: Quick Action Links & Date */}
+                {/* Right Side: Quick Action Links & Status Dropdown */}
                 <div className="flex items-center space-x-3 self-start lg:self-center shrink-0 pt-2 lg:pt-0">
                   {/* WhatsApp Quick Link */}
                   {waLink && (
@@ -396,7 +449,7 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
                       value={enquiry.status}
                       onChange={(e) => handleStatusChange(enquiry.id, e.target.value)}
                       disabled={isPending}
-                      className="px-2.5 py-1.5 bg-[#F7F5F0] border border-[#D8D2C8] text-xs text-[#20201E] focus:outline-none"
+                      className="px-2.5 py-1.5 bg-[#F7F5F0] border border-[#D8D2C8] text-xs text-[#20201E] focus:outline-none hover:border-[#B39A72] cursor-pointer"
                     >
                       <option value="new">New</option>
                       <option value="contacted">Contacted</option>
@@ -497,12 +550,48 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
 
             {/* Detail Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              {/* Editable Inquiry / Service Type */}
               <div className="p-4 bg-[#FFFFFF] border border-[#D8D2C8]">
                 <span className="text-[10px] uppercase tracking-wider text-[#77746F] block mb-1">
-                  Selected Service
+                  Inquiry Type / Service
                 </span>
-                <span className="font-editorial text-lg text-[#20201E]">
-                  {selectedEnquiry.service_type}
+                <select
+                  value={selectedEnquiry.service_type}
+                  onChange={(e) => handleServiceTypeChange(selectedEnquiry.id, e.target.value)}
+                  disabled={isPending}
+                  className="w-full px-2.5 py-2 bg-[#F7F5F0] border border-[#D8D2C8] text-xs font-editorial text-base text-[#20201E] focus:outline-none hover:border-[#B39A72] cursor-pointer"
+                >
+                  {ALL_SERVICES.map((srv) => (
+                    <option key={srv} value={srv}>
+                      {srv}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-[#77746F] mt-1 block">
+                  Select a new category to reassign this inquiry.
+                </span>
+              </div>
+
+              {/* Status Selector in Modal */}
+              <div className="p-4 bg-[#FFFFFF] border border-[#D8D2C8]">
+                <span className="text-[10px] uppercase tracking-wider text-[#77746F] block mb-1">
+                  Inquiry Status
+                </span>
+                <select
+                  value={selectedEnquiry.status}
+                  onChange={(e) => handleStatusChange(selectedEnquiry.id, e.target.value)}
+                  disabled={isPending}
+                  className="w-full px-2.5 py-2 bg-[#F7F5F0] border border-[#D8D2C8] text-xs text-[#20201E] focus:outline-none hover:border-[#B39A72] cursor-pointer"
+                >
+                  <option value="new">New</option>
+                  <option value="reviewed">Reviewed</option>
+                  <option value="contacted">Contacted</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="closed">Closed</option>
+                  <option value="archived">Archived</option>
+                </select>
+                <span className="text-[10px] text-[#77746F] mt-1 block">
+                  Current workflow stage of this client request.
                 </span>
               </div>
 
@@ -536,7 +625,7 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
                 </span>
               </div>
 
-              <div className="p-4 bg-[#FFFFFF] border border-[#D8D2C8] sm:col-span-2">
+              <div className="p-4 bg-[#FFFFFF] border border-[#D8D2C8]">
                 <span className="text-[10px] uppercase tracking-wider text-[#77746F] block mb-1">
                   Location / Venue
                 </span>
@@ -556,44 +645,24 @@ export default function EnquiriesManager({ initialEnquiries }: EnquiriesManagerP
               </div>
             </div>
 
-            {/* Status Update & Delete Row */}
+            {/* Actions & Delete Row */}
             <div className="pt-4 border-t border-[#D8D2C8] flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center space-x-2">
-                <span className="text-xs uppercase tracking-wider text-[#77746F]">
-                  Update Status:
-                </span>
-                <select
-                  value={selectedEnquiry.status}
-                  onChange={(e) => handleStatusChange(selectedEnquiry.id, e.target.value)}
-                  disabled={isPending}
-                  className="px-3 py-1.5 bg-[#F7F5F0] border border-[#D8D2C8] text-xs text-[#20201E] focus:outline-none"
-                >
-                  <option value="new">New</option>
-                  <option value="reviewed">Reviewed</option>
-                  <option value="contacted">Contacted</option>
-                  <option value="confirmed">Confirmed</option>
-                  <option value="closed">Closed</option>
-                  <option value="archived">Archived</option>
-                </select>
-              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmId(selectedEnquiry.id)}
+                className="text-xs text-red-600 hover:text-red-700 flex items-center space-x-1"
+              >
+                <Trash2 size={13} />
+                <span>Delete Enquiry</span>
+              </button>
 
-              <div className="flex items-center space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setDeleteConfirmId(selectedEnquiry.id)}
-                  className="text-xs text-red-600 hover:text-red-700 flex items-center space-x-1"
-                >
-                  <Trash2 size={13} />
-                  <span>Delete Enquiry</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedEnquiry(null)}
-                  className="px-5 py-2 bg-[#20201E] text-white text-xs uppercase tracking-editorial-widest hover:bg-[#B39A72]"
-                >
-                  Done
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedEnquiry(null)}
+                className="px-6 py-2.5 bg-[#20201E] text-white text-xs uppercase tracking-editorial-widest hover:bg-[#B39A72]"
+              >
+                Close Details
+              </button>
             </div>
           </div>
         </div>
